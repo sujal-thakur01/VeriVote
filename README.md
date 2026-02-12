@@ -16,11 +16,10 @@
 
 ## 🎥 Demo Video
 
-<video src="./docs/videos/demo.mp4" controls width="800"></video>
+[![Watch Demo](./docs/screenshots/landing.png)](./docs/videos/demo.mp4)
 
-Or download directly:
+Click the image above to watch the demo.
 
-[Download Demo Video](./docs/videos/demo.mp4)
 
 
 ---

@@ -10,7 +10,7 @@
 
 ![Voting Interface](./docs/screenshots/voting.png)
 
-![Live Results](./docs/results.png)
+![Live Results](./docs/screenshots/results.png)
 
 
 
@@ -46,9 +46,9 @@ Or download directly:
 
 ## Architecture
 
-![Blockchain Flow](./docs/blockchain.png)
+![Blockchain Flow](./docs/screenshots/blockchain.png)
 
-![Application Flow](./docs/flow.png)
+![Application Flow](./docs/screenshots/flow.png)
 
 
 ```
@@ -57,7 +57,7 @@ Student → React/Wallet → Algorand Smart Contract → On-Chain State
                          AI Summary (hash stored)
 ```
 
-![Architecture Diagram](./docs/architecture.png)
+![Architecture Diagram](./docs/screenshots/architecture.png)
 
 ---
 

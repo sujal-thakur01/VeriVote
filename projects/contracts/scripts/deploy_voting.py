@@ -1,42 +1,44 @@
 #!/usr/bin/env python3
 """
-Quick deployment script for VeriVote Smart Contract.
-
-This script deploys the VotingContract to Algorand Testnet and optionally
-creates a demo election.
-
-Usage:
-    python deploy_voting.py [--demo]
-
-Options:
-    --demo    Create a demo election with quickstart times (5 min duration)
+Production Deployment Script for VeriVote Smart Contract
+Fully compatible with ARC4 contracts.
 """
 
 import argparse
-import json
 import sys
 import time
 from pathlib import Path
 
 from algokit_utils import (
     Account,
+    ApplicationClient,
     ApplicationSpecification,
     get_account,
     get_algod_client,
-    get_indexer_client,
 )
-from algokit_utils.applications import ApplicationClient
 from algosdk import transaction
-from algosdk.atomic_transaction_composer import (
-    AccountTransactionSigner,
-    AtomicTransactionComposer,
-    TransactionWithSigner,
-)
+from algosdk.logic import get_application_address
+from algosdk.atomic_transaction_composer import AccountTransactionSigner
 from algosdk.v2client.algod import AlgodClient
 
 
+# ============================================================
+# NETWORK CLIENT
+# ============================================================
+
+def get_testnet_client() -> AlgodClient:
+    return AlgodClient(
+        algod_token="",
+        algod_address="https://testnet-api.algonode.cloud",
+        headers={"User-Agent": "VeriVote"},
+    )
+
+
+# ============================================================
+# LOAD SPEC
+# ============================================================
+
 def load_app_spec() -> ApplicationSpecification:
-    """Load the compiled application specification."""
     spec_path = (
         Path(__file__).parent.parent
         / "smart_contracts"
@@ -46,30 +48,23 @@ def load_app_spec() -> ApplicationSpecification:
 
     if not spec_path.exists():
         print(f"❌ App spec not found at {spec_path}")
-        print("Please run: poetry run puyapy smart_contracts/voting/contract.py")
         sys.exit(1)
 
     with open(spec_path) as f:
-        spec_dict = json.load(f)
+        spec_json = f.read()
 
-    return ApplicationSpecification.from_json(spec_dict)
+    return ApplicationSpecification.from_json(spec_json)
 
 
-def deploy_contract(
-    algod_client: AlgodClient,
-    creator_account: Account,
-    app_spec: ApplicationSpecification,
-) -> int:
-    """
-    Deploy the VotingContract to the network.
+# ============================================================
+# DEPLOY
+# ============================================================
 
-    Returns:
-        Application ID of the deployed contract
-    """
-    print("\n🚀 Deploying VotingContract to Algorand Testnet...")
+def deploy_contract(algod_client, creator_account, app_spec):
+
+    print("\n🚀 Deploying VotingContract to Algorand TestNet...")
     print(f"   Creator: {creator_account.address}")
 
-    # Create application client
     app_client = ApplicationClient(
         algod_client=algod_client,
         app_spec=app_spec,
@@ -77,155 +72,131 @@ def deploy_contract(
         sender=creator_account.address,
     )
 
-    # Deploy the application
-    print("   Creating application...")
     result = app_client.create()
 
-    app_id = result.app_id
-    app_address = result.app_address
+    tx_id = result.tx_id
+    confirmed_txn = transaction.wait_for_confirmation(algod_client, tx_id, 4)
 
-    print(f"\n✅ Contract deployed successfully!")
+    app_id = confirmed_txn["application-index"]
+    app_address = get_application_address(app_id)
+
+    print("\n✅ Contract deployed successfully!")
     print(f"   App ID: {app_id}")
     print(f"   App Address: {app_address}")
-    print(
-        f"   AlgoExplorer: https://testnet.algoexplorer.io/application/{app_id}"
-    )
+    print(f"   AlgoExplorer: https://testnet.algoexplorer.io/application/{app_id}")
 
     return app_id
 
 
-def fund_contract(
-    algod_client: AlgodClient,
-    creator_account: Account,
-    app_address: str,
-    amount: int,
-) -> None:
-    """Fund the contract with minimum balance to hold global state."""
-    print(f"\n💰 Funding contract with {amount / 1_000_000} ALGO...")
+# ============================================================
+# FUND CONTRACT
+# ============================================================
+
+def fund_contract(algod_client, creator_account, app_address):
+
+    print("\n💰 Funding contract with 0.1 ALGO...")
 
     params = algod_client.suggested_params()
+
     txn = transaction.PaymentTxn(
         sender=creator_account.address,
         sp=params,
         receiver=app_address,
-        amt=amount,
+        amt=100_000,
     )
 
     signed_txn = txn.sign(creator_account.private_key)
     tx_id = algod_client.send_transaction(signed_txn)
 
-    # Wait for confirmation
     transaction.wait_for_confirmation(algod_client, tx_id, 4)
-    print(f"   ✅ Funded contract with {amount / 1_000_000} ALGO")
+
+    print("   ✅ Funded contract")
 
 
-def create_demo_election(
-    algod_client: AlgodClient,
-    creator_account: Account,
-    app_spec: ApplicationSpecification,
-    app_id: int,
-    is_quick_demo: bool = False,
-) -> None:
-    """Create a demo election in the deployed contract."""
-    app_client = ApplicationClient(
-        algod_client=algod_client,
-        app_spec=app_spec,
-        signer=AccountTransactionSigner(creator_account.private_key),
-        sender=creator_account.address,
-        app_id=app_id,
+# ============================================================
+# INITIALIZE ELECTION (FIXED ABI CALL)
+# ============================================================
+
+def initialize_election(algod_client, creator_account, app_spec, app_id):
+
+    print("\n🗳️ Initializing election...")
+
+    from algosdk.atomic_transaction_composer import AtomicTransactionComposer
+    from algosdk.abi import Method
+    from algosdk.transaction import OnComplete
+
+    current_time = int(time.time())
+    start_time = current_time - 60
+    end_time = current_time + 3600
+
+    print(f"   Start time: {start_time}")
+    print(f"   End time: {end_time}")
+
+    signer = AccountTransactionSigner(creator_account.private_key)
+
+    atc = AtomicTransactionComposer()
+
+    # Define ABI method manually
+    method = Method.from_signature(
+        "create_election(uint64,uint64)string"
     )
 
-    # Get current time
     params = algod_client.suggested_params()
-    latest_block = algod_client.block_info(params.first)
-    current_time = latest_block.get("block", {}).get("ts", int(time.time()))
 
-    # Set election times
-    if is_quick_demo:
-        # Quick demo: starts in 10 seconds, ends in 5 minutes
-        start_time = current_time + 10
-        end_time = current_time + 300
-        print(f"\n⚡ Creating Quick Demo Election...")
-        print(f"   Starts in: 10 seconds")
-        print(f"   Ends in: 5 minutes")
-    else:
-        # Standard: starts in 1 minute, ends in 1 hour
-        start_time = current_time + 60
-        end_time = current_time + 3600
-        print(f"\n📅 Creating Standard Election...")
-        print(f"   Starts in: 1 minute")
-        print(f"   Ends in: 1 hour")
-
-    print(f"   Start time (UNIX): {start_time}")
-    print(f"   End time (UNIX): {end_time}")
-
-    # Call create_election method
-    result = app_client.call(
-        "create_election",
-        start_time=start_time,
-        end_time=end_time,
+    atc.add_method_call(
+        app_id=app_id,
+        method=method,
+        sender=creator_account.address,
+        sp=params,
+        signer=signer,
+        method_args=[start_time, end_time],
+        on_complete=OnComplete.NoOpOC,
     )
 
-    print(f"\n✅ Election created successfully!")
-    print(f"   Transaction ID: {result.tx_id}")
+    result = atc.execute(algod_client, 4)
+
+    print("   ✅ Election initialized successfully")
+    print(f"   Tx ID: {result.tx_ids[0]}")
 
 
-def main() -> None:
-    """Main deployment function."""
-    parser = argparse.ArgumentParser(
-        description="Deploy VeriVote Smart Contract to Algorand Testnet"
-    )
-    parser.add_argument(
-        "--demo",
-        action="store_true",
-        help="Create a quick demo election (5 min duration)",
-    )
-    parser.add_argument(
-        "--standard",
-        action="store_true",
-        help="Create a standard election (1 hour duration)",
-    )
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+def main():
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--network", choices=["localnet", "testnet"], default="testnet")
     args = parser.parse_args()
 
     print("=" * 70)
     print("VeriVote Smart Contract Deployment")
+    print(f"Network: {args.network.upper()}")
     print("=" * 70)
 
-    # Setup clients
-    algod_client = get_algod_client()
-    creator_account = get_account(algod_client, "DEPLOYER")
+    if args.network == "testnet":
+        algod_client = get_testnet_client()
+        creator_account = get_account(algod_client, "DEPLOYER")
+    else:
+        algod_client = get_algod_client()
+        creator_account = get_account(algod_client, "DEPLOYER")
 
-    # Load app spec
     app_spec = load_app_spec()
 
-    # Deploy contract
     app_id = deploy_contract(algod_client, creator_account, app_spec)
-
-    # Get app address from the client
-    from algosdk.logic import get_application_address
 
     app_address = get_application_address(app_id)
 
-    # Fund contract with minimum balance (0.1 ALGO for safety)
-    fund_contract(algod_client, creator_account, app_address, 100_000)
+    fund_contract(algod_client, creator_account, app_address)
 
-    # Create election if requested
-    if args.demo or args.standard:
-        create_demo_election(
-            algod_client,
-            creator_account,
-            app_spec,
-            app_id,
-            is_quick_demo=args.demo,
-        )
+    initialize_election(algod_client, creator_account, app_spec, app_id)
 
-    # Save app ID to env file template
-    print(f"\n📝 Update your .env file with:")
-    print(f"   VITE_VOTING_APP_ID={app_id}")
+    print(f"\n📝 Update frontend .env:")
+    print(f"VITE_VOTING_APP_ID={app_id}")
 
-    print("\n" + "=" * 70)
-    print("🎉 Deployment Complete!")
-    print("=" * 70)
+    print("\n🎉 Deployment Complete!")
 
 
 if __name__ == "__main__":

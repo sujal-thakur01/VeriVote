@@ -1,5 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useSnackbar } from 'notistack'
+import { useWallet } from '@txnlab/use-wallet-react'
+import { AlgorandClient } from '@algorandfoundation/algokit-utils'
+import { getAlgodConfigFromViteEnvironment, getIndexerConfigFromViteEnvironment } from '../utils/network/getAlgoClientConfigs'
+import { VotingContractClient } from '../contracts/VotingContract'
+import { copyToClipboard, truncateHash, truncateAddress } from '../utils/clipboard'
 
 interface Candidate {
     id: number
@@ -10,26 +15,103 @@ interface Candidate {
 
 const VotingInterface = () => {
     const { enqueueSnackbar } = useSnackbar()
+    const { activeAddress, transactionSigner } = useWallet()
 
     // Election state
     const [timeRemaining, setTimeRemaining] = useState({ minutes: 4, seconds: 32 })
     const [hasVoted, setHasVoted] = useState<number | null>(null)
     const [isVoting, setIsVoting] = useState(false)
     const [showConfetti, setShowConfetti] = useState(false)
+    const [transactionHash, setTransactionHash] = useState<string>('')
+    const [balance, setBalance] = useState<number>(0)
 
-    // Candidates state
+    // Candidates state (will be synced from blockchain)
     const [candidates, setCandidates] = useState<Candidate[]>([
-        { id: 1, name: 'Alice Thompson', avatar: '👩‍💼', votes: 42 },
-        { id: 2, name: 'Bob Martinez', avatar: '👨‍💼', votes: 38 }
+        { id: 1, name: 'Alice Thompson', avatar: '👩‍💼', votes: 0 },
+        { id: 2, name: 'Bob Martinez', avatar: '👨‍💼', votes: 0 }
     ])
 
-    // Check localStorage on mount
-    useEffect(() => {
-        const savedVote = localStorage.getItem('verivote_voted')
-        if (savedVote) {
-            setHasVoted(parseInt(savedVote))
+    // Setup Algorand client
+    const algodConfig = getAlgodConfigFromViteEnvironment()
+    const indexerConfig = getIndexerConfigFromViteEnvironment()
+    const algorand = AlgorandClient.fromConfig({
+        algodConfig,
+        indexerConfig,
+    })
+    algorand.setDefaultSigner(transactionSigner)
+
+    const activeNetwork = algodConfig.network || 'localnet'
+    const appId = Number(import.meta.env.VITE_VOTING_APP_ID) || 0
+
+    // Fetch real election state from blockchain
+    const fetchElectionState = async () => {
+        if (!appId) return
+
+        try {
+            const appInfo = await algorand.client.algod
+                .getApplicationByID(appId)
+                .do()
+
+            const globalState = appInfo.params.globalState
+
+            if (!globalState) {
+                console.warn('No global state found for app:', appId)
+                return
+            }
+
+            const decodeKey = (key: string) => {
+                const match = globalState.find((s: any) =>
+                    atob(s.key) === key
+                )
+                // Convert bigint to number safely
+                const value = match?.value?.uint
+                return value ? Number(value) : 0
+            }
+
+            const candidateAVotes = decodeKey("candidate_a_votes")
+            const candidateBVotes = decodeKey("candidate_b_votes")
+
+            setCandidates([
+                { id: 1, name: 'Alice Thompson', avatar: '👩‍💼', votes: candidateAVotes },
+                { id: 2, name: 'Bob Martinez', avatar: '👨‍💼', votes: candidateBVotes }
+            ])
+        } catch (error) {
+            console.error('Error fetching election state:', error)
         }
-    }, [])
+    }
+
+    // Fetch election state on component load
+    useEffect(() => {
+        if (appId) {
+            void fetchElectionState()
+        }
+    }, [appId])
+
+    // Fetch wallet balance
+    useEffect(() => {
+        const fetchBalance = async () => {
+            if (activeAddress) {
+                try {
+                    const algodClient = algorand.client.algod
+                    const accountInfo = await algodClient.accountInformation(activeAddress).do()
+                    setBalance(Number(accountInfo.amount) / 1_000_000) // Convert microAlgos to Algos
+                } catch (error) {
+                    console.error('Error fetching balance:', error)
+                }
+            }
+        }
+        void fetchBalance()
+    }, [activeAddress, algorand])
+
+    // Network check
+    useEffect(() => {
+        if (activeNetwork && activeNetwork !== 'testnet') {
+            enqueueSnackbar('⚠️ Please switch to Algorand TestNet in your wallet', {
+                variant: 'warning',
+                persist: true
+            })
+        }
+    }, [activeNetwork, enqueueSnackbar])
 
     // Countdown timer
     useEffect(() => {
@@ -47,57 +129,121 @@ const VotingInterface = () => {
         return () => clearInterval(timer)
     }, [])
 
-    // Auto-increment votes (simulate real-time updates)
+    // Poll blockchain state every 5 seconds for real-time updates
     useEffect(() => {
-        const voteUpdater = setInterval(() => {
-            setCandidates(prev => {
-                const randomCandidate = Math.random() > 0.5 ? 0 : 1
-                const newCandidates = [...prev]
-                newCandidates[randomCandidate].votes += 1
-                return newCandidates
-            })
-        }, 3000)
+        if (!appId) return
 
-        return () => clearInterval(voteUpdater)
-    }, [])
+        const pollInterval = setInterval(() => {
+            void fetchElectionState()
+        }, 5000)
+
+        return () => clearInterval(pollInterval)
+    }, [appId])
 
     const handleVote = async (candidateId: number) => {
-        if (hasVoted) return
+        // Let smart contract enforce double-vote prevention, not client-side
 
-        setIsVoting(true)
+        try {
+            setIsVoting(true)
 
-        // Simulate blockchain transaction delay
-        await new Promise(resolve => setTimeout(resolve, 1500))
+            // 1. Check wallet is connected
+            if (!activeAddress) {
+                throw new Error("Please connect your Pera Wallet first")
+            }
 
-        const candidate = candidates.find(c => c.id === candidateId)
+            // 2. Check network
+            if (activeNetwork !== 'testnet') {
+                throw new Error("Please switch to TestNet in your wallet")
+            }
 
-        // Update vote count
-        setCandidates(prev =>
-            prev.map(c => c.id === candidateId ? { ...c, votes: c.votes + 1 } : c)
-        )
+            // 3. Check balance
+            if (balance < 0.01) {
+                throw new Error("Insufficient ALGO balance. Get testnet tokens from https://bank.testnet.algorand.network/")
+            }
 
-        // Save vote
-        setHasVoted(candidateId)
-        localStorage.setItem('verivote_voted', candidateId.toString())
+            // 4. Check App ID is configured
+            if (!appId) {
+                throw new Error("Contract not configured. Missing VITE_VOTING_APP_ID")
+            }
 
-        setIsVoting(false)
+            // 5. Use VotingContract client to call cast_vote method
+            const votingClient = new VotingContractClient({
+                appId: BigInt(appId),
+                algorand,
+                defaultSigner: transactionSigner
+            })
 
-        // Show confetti celebration
-        setShowConfetti(true)
-        setTimeout(() => setShowConfetti(false), 3000)
+            // Call cast_vote method with candidate ID
+            const result = await votingClient.send.castVote({
+                args: { candidateId: BigInt(candidateId) },
+                sender: activeAddress
+            })
 
-        // Success notification
-        enqueueSnackbar(`✅ Vote submitted to blockchain for ${candidate?.name}!`, {
-            variant: 'success',
-            autoHideDuration: 3000
-        })
+            const txId = result.transaction.txID()
+
+            // Fetch fresh state from blockchain
+            await fetchElectionState()
+
+            // Update UI with success
+            setTransactionHash(txId)
+            setHasVoted(candidateId)
+
+            const candidate = candidates.find(c => c.id === candidateId)
+            setIsVoting(false)
+
+            // Show confetti celebration
+            setShowConfetti(true)
+            setTimeout(() => setShowConfetti(false), 3000)
+
+            // Success notification
+            enqueueSnackbar(`✅ Vote recorded on blockchain for ${candidate?.name}!`, {
+                variant: 'success',
+                autoHideDuration: 5000
+            })
+
+        } catch (error: any) {
+            setIsVoting(false)
+
+            // Handle specific errors
+            if (error.message?.includes('already voted') || error.message?.includes('You have already voted')) {
+                enqueueSnackbar('❌ You have already voted in this election', { variant: 'error' })
+            } else if (error.message?.includes('rejected') || error.message?.includes('cancelled')) {
+                enqueueSnackbar('❌ Transaction rejected by wallet', { variant: 'warning' })
+            } else if (error.message?.includes('insufficient') || error.message?.includes('balance')) {
+                enqueueSnackbar('❌ Insufficient ALGO balance. Get testnet tokens from https://bank.testnet.algorand.network/', {
+                    variant: 'error',
+                    autoHideDuration: 8000
+                })
+            } else if (error.message?.includes('Please connect')) {
+                enqueueSnackbar(error.message, { variant: 'warning' })
+            } else {
+                enqueueSnackbar(`❌ Error: ${error.message}`, { variant: 'error' })
+            }
+
+            console.error('Voting error:', error)
+        }
     }
 
     const totalVotes = candidates.reduce((sum, c) => sum + c.votes, 0)
     const getPercentage = (votes: number) => totalVotes > 0 ? ((votes / totalVotes) * 100).toFixed(1) : '0.0'
 
     return (
-        <div className="min-h-screen bg-slate-950 relative overflow-hidden">
+        <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 p-6 relative overflow-hidden">
+            {/* Network Status Badge - Top Right */}
+            <div className="fixed top-6 right-6 z-50">
+                {activeNetwork === 'testnet' ? (
+                    <div className="flex items-center gap-2 bg-green-500/20 backdrop-blur-md border border-green-400/30 rounded-full px-4 py-2">
+                        <span className="text-green-400 text-2xl">🟢</span>
+                        <span className="text-green-300 font-medium">TestNet</span>
+                    </div>
+                ) : (
+                    <div className="flex items-center gap-2 bg-yellow-500/20 backdrop-blur-md border border-yellow-400/30 rounded-full px-4 py-2">
+                        <span className="text-yellow-400 text-2xl">⚠️</span>
+                        <span className="text-yellow-300 font-medium">Wrong Network</span>
+                    </div>
+                )}
+            </div>
+
             {/* Animated background orbs */}
             <div className="absolute inset-0 overflow-hidden pointer-events-none">
                 <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-500/20 rounded-full blur-3xl animate-pulse"></div>
@@ -129,6 +275,55 @@ const VotingInterface = () => {
 
             <div className="relative py-8 px-4">
                 <div className="max-w-7xl mx-auto space-y-8">
+
+                    {/* Enhanced Faucet Helper */}
+                    {activeAddress && balance < 0.1 && (
+                        <div className="bg-gradient-to-r from-yellow-500/10 to-orange-500/10 border border-yellow-400/30 rounded-2xl p-6 backdrop-blur-md">
+                            <div className="flex items-start gap-4">
+                                <div className="text-4xl">🚰</div>
+                                <div className="flex-1 space-y-3">
+                                    <h3 className="text-yellow-300 font-bold text-lg">Need TestNet ALGO?</h3>
+                                    <p className="text-yellow-200/80 text-sm">
+                                        Your balance is low ({balance.toFixed(3)} ALGO). Get free testnet tokens for testing:
+                                    </p>
+
+                                    {/* Wallet Address with Copy */}
+                                    <div className="bg-black/20 rounded-lg p-3 border border-yellow-400/20">
+                                        <div className="text-yellow-300/70 text-xs mb-1">Your Wallet Address:</div>
+                                        <div className="flex items-center gap-2">
+                                            <code className="text-yellow-200 text-sm font-mono flex-1 break-all">
+                                                {truncateAddress(activeAddress)}
+                                            </code>
+                                            <button
+                                                onClick={async () => {
+                                                    const success = await copyToClipboard(activeAddress)
+                                                    if (success) {
+                                                        enqueueSnackbar('Address copied to clipboard ✓', { variant: 'success' })
+                                                    }
+                                                }}
+                                                className="px-3 py-1.5 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-200 rounded-lg transition-all text-sm font-medium flex items-center gap-1"
+                                            >
+                                                📋 Copy
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Faucet Link */}
+                                    <a
+                                        href="https://bank.testnet.algorand.network/"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-yellow-500 to-orange-500 hover:from-yellow-400 hover:to-orange-400 text-white rounded-lg font-semibold transition-all shadow-lg shadow-yellow-500/20 hover:shadow-yellow-500/40"
+                                    >
+                                        Get TestNet ALGO
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                        </svg>
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Header */}
                     <div className="text-center mb-8">
@@ -176,8 +371,8 @@ const VotingInterface = () => {
                                         <div
                                             key={candidate.id}
                                             className={`group relative overflow-hidden rounded-2xl p-6 transition-all duration-300 ${hasVoted === candidate.id
-                                                    ? 'bg-gradient-to-r from-blue-600/30 to-purple-600/30 border-2 border-blue-400 shadow-xl shadow-blue-500/30 scale-105'
-                                                    : 'bg-gradient-to-r from-white/5 to-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10'
+                                                ? 'bg-gradient-to-r from-blue-600/30 to-purple-600/30 border-2 border-blue-400 shadow-xl shadow-blue-500/30 scale-105'
+                                                : 'bg-gradient-to-r from-white/5 to-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10'
                                                 }`}
                                         >
                                             {hasVoted === candidate.id && (
@@ -186,8 +381,8 @@ const VotingInterface = () => {
                                             <div className="relative flex items-center justify-between">
                                                 <div className="flex items-center gap-5">
                                                     <div className={`text-7xl p-4 rounded-2xl ${hasVoted === candidate.id
-                                                            ? 'bg-gradient-to-br from-blue-500/30 to-purple-500/30 shadow-lg shadow-blue-500/50'
-                                                            : 'bg-gradient-to-br from-gray-700/50 to-gray-600/50'
+                                                        ? 'bg-gradient-to-br from-blue-500/30 to-purple-500/30 shadow-lg shadow-blue-500/50'
+                                                        : 'bg-gradient-to-br from-gray-700/50 to-gray-600/50'
                                                         }`}>
                                                         {candidate.avatar}
                                                     </div>
@@ -201,10 +396,10 @@ const VotingInterface = () => {
                                                     onClick={() => handleVote(candidate.id)}
                                                     disabled={hasVoted !== null || isVoting}
                                                     className={`px-8 py-4 rounded-xl font-bold text-lg transition-all duration-300 ${hasVoted === candidate.id
-                                                            ? 'bg-green-500 text-white cursor-default shadow-lg shadow-green-500/50'
-                                                            : hasVoted
-                                                                ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                                                                : 'bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-500 hover:to-purple-500 hover:scale-110 shadow-xl shadow-purple-500/50 hover:shadow-purple-500/70'
+                                                        ? 'bg-green-500 text-white cursor-default shadow-lg shadow-green-500/50'
+                                                        : hasVoted
+                                                            ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                                                            : 'bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-500 hover:to-purple-500 hover:scale-110 shadow-xl shadow-purple-500/50 hover:shadow-purple-500/70'
                                                         }`}
                                                 >
                                                     {isVoting ? (
@@ -286,8 +481,8 @@ const VotingInterface = () => {
                                                 <div className="relative w-full bg-gray-800/50 rounded-full h-4 overflow-hidden border border-white/10">
                                                     <div
                                                         className={`absolute inset-0 rounded-full transition-all duration-500 ${candidate.id === 1
-                                                                ? 'bg-gradient-to-r from-blue-500 via-blue-400 to-cyan-400 shadow-lg shadow-blue-500/50'
-                                                                : 'bg-gradient-to-r from-purple-500 via-purple-400 to-pink-400 shadow-lg shadow-purple-500/50'
+                                                            ? 'bg-gradient-to-r from-blue-500 via-blue-400 to-cyan-400 shadow-lg shadow-blue-500/50'
+                                                            : 'bg-gradient-to-r from-purple-500 via-purple-400 to-pink-400 shadow-lg shadow-purple-500/50'
                                                             }`}
                                                         style={{ width: `${getPercentage(candidate.votes)}%` }}
                                                     ></div>
@@ -318,51 +513,113 @@ const VotingInterface = () => {
                                         <span className="text-3xl">⛓️</span> Blockchain Verification
                                     </h3>
 
-                                    <div className="space-y-4 text-sm">
-                                        <div className="flex justify-between items-center p-4 bg-white/5 rounded-xl border border-white/10 hover:border-white/20 transition-all group">
-                                            <span className="text-gray-400 font-semibold">App ID</span>
-                                            <span className="font-mono font-black text-xl text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-400 group-hover:scale-110 transition-transform">1004</span>
+                                    <div className="space-y-4">
+                                        {/* App ID with Copy Button */}
+                                        <div className="bg-white/5 rounded-xl border border-white/10 hover:border-white/20 transition-all p-4">
+                                            <div className="text-gray-400 font-semibold mb-2 text-xs uppercase tracking-wider">Smart Contract App ID</div>
+                                            <div className="flex items-center gap-3">
+                                                <span className="font-mono font-black text-2xl text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-400 flex-1">
+                                                    {appId || 'Not Set'}
+                                                </span>
+                                                {appId && (
+                                                    <button
+                                                        onClick={async () => {
+                                                            const success = await copyToClipboard(appId.toString())
+                                                            if (success) {
+                                                                enqueueSnackbar('App ID copied to clipboard ✓', { variant: 'success' })
+                                                            }
+                                                        }}
+                                                        className="px-3 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-200 rounded-lg transition-all text-sm font-medium flex items-center gap-1.5"
+                                                    >
+                                                        📋 Copy
+                                                    </button>
+                                                )}
+                                            </div>
                                         </div>
 
+                                        {/* Network Badge */}
                                         <div className="flex justify-between items-center p-4 bg-white/5 rounded-xl border border-white/10 hover:border-white/20 transition-all">
                                             <span className="text-gray-400 font-semibold">Network</span>
-                                            <span className="font-bold text-purple-400">Algorand LocalNet</span>
+                                            <span className="font-bold text-purple-400">Algorand {activeNetwork === 'testnet' ? 'TestNet' : 'LocalNet'}</span>
                                         </div>
 
+                                        {/* Contract Status */}
                                         <div className="flex justify-between items-center p-4 bg-white/5 rounded-xl border border-white/10 hover:border-white/20 transition-all">
-                                            <span className="text-gray-400 font-semibold">Status</span>
+                                            <span className="text-gray-400 font-semibold">Contract Status</span>
                                             <span className="flex items-center gap-2 text-green-400 font-bold">
                                                 <span className="w-2 h-2 bg-green-400 rounded-full animate-pulse shadow-lg shadow-green-400/50"></span>
-                                                Contract Deployed
+                                                Deployed
                                             </span>
                                         </div>
 
-                                        {hasVoted && (
+                                        {/* Transaction Hash (After Voting) */}
+                                        {transactionHash && (
                                             <div className="p-4 bg-gradient-to-r from-blue-500/10 to-purple-500/10 rounded-xl border border-blue-500/20">
-                                                <div className="text-gray-400 mb-2 font-semibold text-xs uppercase tracking-wider">Transaction Hash</div>
-                                                <div className="font-mono text-xs text-cyan-400 break-all bg-black/30 p-3 rounded-lg border border-cyan-500/20 shadow-inner">
-                                                    {`0x${Math.random().toString(16).substr(2, 64)}`}
+                                                <div className="text-gray-400 mb-2 font-semibold text-xs uppercase tracking-wider">Your Transaction</div>
+                                                <div className="flex items-center gap-2 mb-3">
+                                                    <code className="font-mono text-sm text-cyan-400 bg-black/30 px-3 py-2 rounded-lg border border-cyan-500/20 flex-1">
+                                                        {truncateHash(transactionHash, 12, 12)}
+                                                    </code>
+                                                    <button
+                                                        onClick={async () => {
+                                                            const success = await copyToClipboard(transactionHash)
+                                                            if (success) {
+                                                                enqueueSnackbar('Transaction hash copied ✓', { variant: 'success' })
+                                                            }
+                                                        }}
+                                                        className="px-3 py-2 bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-200 rounded-lg transition-all text-sm font-medium"
+                                                    >
+                                                        📋
+                                                    </button>
                                                 </div>
+                                                <a
+                                                    href={`https://testnet.algoexplorer.io/tx/${transactionHash}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="inline-flex items-center gap-2 text-cyan-300 hover:text-cyan-200 text-sm font-medium"
+                                                >
+                                                    View transaction on AlgoExplorer
+                                                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                                    </svg>
+                                                </a>
                                             </div>
                                         )}
                                     </div>
 
-                                    <button
-                                        disabled
-                                        className="mt-6 w-full px-4 py-4 bg-gray-700/30 text-gray-500 rounded-xl font-bold cursor-not-allowed flex items-center justify-center gap-2 group relative border border-gray-600/30"
-                                    >
-                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                                        </svg>
-                                        View on Explorer
-                                        <span className="absolute -top-14 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white text-xs px-4 py-2 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap border border-gray-700 shadow-xl">
-                                            LocalNet not publicly accessible
-                                        </span>
-                                    </button>
+                                    {/* View Contract on Explorer Button */}
+                                    {appId && activeNetwork === 'testnet' && (
+                                        <a
+                                            href={`https://testnet.explorer.perawallet.app/application/${appId}`}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="mt-6 w-full px-4 py-4 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-xl font-bold flex items-center justify-center gap-2 transition-all shadow-xl shadow-blue-500/50 hover:shadow-blue-500/70"
+                                        >
+                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                            </svg>
+                                            View Contract on AlgoExplorer
+                                        </a>
+                                    )}
                                 </div>
                             </div>
                         </div>
                     </div>
+
+                    {/* Transaction Hash Link */}
+                    {transactionHash && (
+                        <div className="bg-blue-500/10 border border-blue-400/30 rounded-xl p-4 backdrop-blur-sm">
+                            <p className="text-blue-300 text-sm mb-2">✅ Transaction Confirmed!</p>
+                            <a
+                                href={`https://testnet.explorer.perawallet.app/tx/${transactionHash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-blue-200 hover:text-blue-100 underline text-sm break-all"
+                            >
+                                View on AlgoExplorer: {transactionHash.substring(0, 20)}...
+                            </a>
+                        </div>
+                    )}
 
                     {/* Security Features Banner - Enhanced */}
                     <div className="relative backdrop-blur-xl bg-gradient-to-r from-indigo-500/10 via-purple-500/10 to-pink-500/10 border border-indigo-500/20 hover:border-indigo-400/40 rounded-3xl p-8 shadow-2xl shadow-indigo-500/10 transition-all duration-300">

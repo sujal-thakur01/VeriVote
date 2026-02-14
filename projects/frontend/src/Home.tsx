@@ -1,8 +1,10 @@
 // src/components/Home.tsx
 import { useWallet } from '@txnlab/use-wallet-react'
 import React, { useState } from 'react'
+import { useSnackbar } from 'notistack'
 import ConnectWallet from './components/ConnectWallet'
 import VotingInterface from './components/VotingInterface'
+import { copyToClipboard } from './utils/clipboard'
 
 interface HomeProps { }
 
@@ -10,6 +12,9 @@ const Home: React.FC<HomeProps> = () => {
   const [openWalletModal, setOpenWalletModal] = useState<boolean>(false)
   const [showVotingInterface, setShowVotingInterface] = useState<boolean>(false)
   const { activeAddress } = useWallet()
+  const { enqueueSnackbar } = useSnackbar()
+  const appId = Number(import.meta.env.VITE_VOTING_APP_ID) || 0
+  const network = import.meta.env.VITE_ALGOD_NETWORK || 'localnet'
 
   const toggleWalletModal = () => {
     setOpenWalletModal(!openWalletModal)
@@ -170,6 +175,68 @@ const Home: React.FC<HomeProps> = () => {
             </div>
           </div>
 
+          {/* Blockchain Verification Section */}
+          <div className="mt-24 relative backdrop-blur-xl bg-gradient-to-br from-cyan-500/10 to-blue-500/10 border border-cyan-500/20 hover:border-cyan-400/40 rounded-3xl p-10 shadow-2xl shadow-cyan-500/10 transition-all duration-300">
+            <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/0 to-blue-500/5 rounded-3xl"></div>
+            <div className="relative">
+              <div className="text-center mb-8">
+                <h2 className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-blue-400 mb-3 flex items-center justify-center gap-3">
+                  <span className="text-5xl">🔐</span>
+                  Verify Everything On-Chain
+                </h2>
+                <p className="text-gray-300 text-lg">All votes and results are publicly verifiable on Algorand TestNet</p>
+              </div>
+
+              {/* Stats Grid */}
+              <div className="grid md:grid-cols-2 gap-6 mb-8">
+                <div className="bg-white/5 rounded-2xl border border-white/10 hover:border-white/20 transition-all p-6">
+                  <div className="text-gray-400 text-sm uppercase tracking-wider mb-2">Smart Contract App ID</div>
+                  <div className="flex items-center gap-3">
+                    <div className="font-mono font-black text-3xl text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-cyan-400 flex-1">
+                      {appId || 'Not Set'}
+                    </div>
+                    {appId && (
+                      <button
+                        onClick={async () => {
+                          const success = await copyToClipboard(appId.toString())
+                          if (success) {
+                            enqueueSnackbar('App ID copied to clipboard ✓', { variant: 'success' })
+                          }
+                        }}
+                        className="px-3 py-2 bg-blue-500/20 hover:bg-blue-500/30 text-blue-200 rounded-lg transition-all text-sm font-medium"
+                      >
+                        📋 Copy
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="bg-white/5 rounded-2xl border border-white/10 hover:border-white/20 transition-all p-6">
+                  <div className="text-gray-400 text-sm uppercase tracking-wider mb-2">Network</div>
+                  <div className="font-bold text-2xl text-purple-400">
+                    Algorand {network === 'testnet' ? 'TestNet' : 'LocalNet'}
+                  </div>
+                </div>
+              </div>
+
+              {/* AlgoExplorer Button */}
+              {appId && network === 'testnet' && (
+                <a
+                  href={`https://testnet.algoexplorer.io/application/${appId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="w-full flex items-center justify-center gap-3 px-8 py-4 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-xl font-bold text-lg transition-all shadow-xl shadow-blue-500/50 hover:shadow-blue-500/70 hover:scale-105"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                  View Contract on AlgoExplorer
+                  <span className="text-sm opacity-75">↗</span>
+                </a>
+              )}
+            </div>
+          </div>
+
           {/* Stats with glow effects */}
           <div className="mt-16 grid grid-cols-3 gap-8">
             <div className="text-center group">
@@ -181,7 +248,7 @@ const Home: React.FC<HomeProps> = () => {
               <div className="text-gray-400 text-sm uppercase tracking-wider">Blockchain Secured</div>
             </div>
             <div className="text-center group">
-              <div className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400 mb-2 group-hover:scale-110 transition-transform">1004</div>
+              <div className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400 mb-2 group-hover:scale-110 transition-transform">{appId || '1004'}</div>
               <div className="text-gray-400 text-sm uppercase tracking-wider">App ID</div>
             </div>
           </div>

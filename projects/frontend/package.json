@@ -52,11 +52,9 @@
     "generate:app-clients": "algokit project link --all",
     "dev": "vite",
     "build": "vite build",
-    "test": "jest --coverage --passWithNoTests",
-    "playwright:test": "playwright test",
+    "preview": "vite preview",
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "lint:fix": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0 --fix",
-    "preview": "vite preview"
+    "lint:fix": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0 --fix"
   },
   "eslintConfig": {
     "extends": [

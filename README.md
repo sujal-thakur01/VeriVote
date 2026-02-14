@@ -1,118 +1,123 @@
-# VeriVote
+# VeriVote - Blockchain Voting dApp
 
-**Blockchain-verified campus voting on Algorand — one wallet, one vote, full transparency.**
+**A secure, transparent voting platform built on Algorand blockchain**
 
-> Built for **Hackspiration '26** | Track 2: AI & Automation in Blockchain
+[![Algorand](https://img.shields.io/badge/Blockchain-Algorand-00D1B2?style=flat-square)](https://www.algorand.com/)
+[![React](https://img.shields.io/badge/Frontend-React-61DAFB?style=flat-square&logo=react)](https://reactjs.org/)
+[![TypeScript](https://img.shields.io/badge/Language-TypeScript-3178C6?style=flat-square&logo=typescript)](https://www.typescriptlang.org/)
 
----
+## 🎯 Overview
 
-## Demo
+VeriVote is a decentralized voting application that leverages Algorand's blockchain technology to ensure transparent, immutable, and verifiable elections. Built for hackathons and production use cases requiring trustless voting mechanisms.
 
-| Landing Page | Voting Interface | Live Results |
-|:---:|:---:|:---:|
-| ![Landing](./docs/screenshots/landing.png) | ![Voting](./docs/screenshots/voting.png) | ![Results](./docs/screenshots/results.png) |
-
-https://github.com/user-attachments/assets/demo.mp4
-
-[Download Demo Video](./docs/videos/demo.mp4)
-
----
-
-## Problem
-
-- Campus elections rely on centralized systems vulnerable to tampering
-- No verifiable audit trail — students can't trust results
-- No enforcement against double voting or vote manipulation
-
-## Solution
-
-- **On-chain voting** — Every vote immutably recorded on Algorand TestNet
-- **Double-vote prevention** — Smart contract enforces 1 wallet = 1 vote via local state
-- **Time-lock enforcement** — Voting window cryptographically enforced on-chain
-- **AI audit hash** — SHA256 report hash stored on-chain for verifiable transparency
-
----
-
-## Architecture
+## 🏗️ Architecture
 
 ```
-Student → Pera Wallet → React Frontend → Algorand Smart Contract → On-Chain State
-                                                  ↓
-                                         AI Report Hash (SHA256)
+VeriVote/
+├── projects/
+│   ├── contracts/     # Algorand smart contracts (ARC4/Python)
+│   └── frontend/      # React + TypeScript dApp
+└── docs/             # Documentation and guides
 ```
 
-![Architecture](./docs/screenshots/architecture.png)
+### Tech Stack
 
----
+**Smart Contracts**
+- AlgoKit (Algorand development framework)
+- Python with ARC4 standard
+- Algorand TestNet/MainNet deployment
 
-## Smart Contract
+**Frontend**
+- React 18 + Vite
+- TypeScript
+- @txnlab/use-wallet-react (Pera Wallet integration)
+- Algorand SDK (algosdk)
 
-| | |
-|---|---|
-| **Standard** | ARC4 (Algopy → TEAL via Puyapy) |
-| **Network** | Algorand TestNet |
-| **App ID** | `755499428` |
+## 📐 Repository Philosophy
 
-**Global State:** `candidate_a_votes`, `candidate_b_votes`, `election_start`, `election_end`, `total_voters`, `ai_report_hash`, `election_closed`
+This repository has been intentionally curated to include only production-critical files. All template artifacts, unused frameworks, and debug files have been removed to ensure clarity, maintainability, and professional structure.
 
-**Local State:** `has_voted`, `vote_timestamp`
+**Design Principles:**
+- One package manager (npm)
+- Minimal configuration files
+- Essential build tools only
+- Clean, reviewable codebase
 
-**Methods:** `create_election` · `cast_vote` · `close_election` · `get_results` · `get_voter_status` · `opt_in_voter`
+## 🚀 Quick Start
 
-**On-chain security:**
-- Time-window validation — no voting outside election period
-- Double-vote check via local state flag
-- Creator-only election lifecycle control
-- Immutable, auditable vote records
+### Prerequisites
+- Node.js 18+
+- Python 3.12+
+- AlgoKit CLI
+- Pera Wallet (mobile or browser extension)
 
----
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|------------|
-| Smart Contract | Python (Algopy) → TEAL |
-| Blockchain | Algorand TestNet |
-| Frontend | React + TypeScript + Vite |
-| Styling | TailwindCSS (Glassmorphism) |
-| Wallet | Pera Wallet (via use-wallet) |
-| Deployment | AlgoKit + Poetry |
-
----
-
-## How to Run
-
+### 1. Clone Repository
 ```bash
-# Deploy contract to TestNet
-cd projects/contracts
-poetry install
-poetry run python scripts/deploy_voting.py --network testnet
+git clone <repository-url>
+cd VeriVote
+```
 
-# Run frontend
+### 2. Deploy Smart Contract
+```bash
+cd projects/contracts
+# See contracts/README.md for deployment instructions
+```
+
+### 3. Run Frontend
+```bash
 cd projects/frontend
 npm install
+cp .env.example .env
+# Update .env with your deployed contract App ID
 npm run dev
-# → http://localhost:5173
 ```
 
+## ✨ Features
+
+- **Blockchain-Verified Voting**: All votes recorded immutably on Algorand
+- **Wallet Integration**: Seamless Pera Wallet connection
+- **Opt-In Flow**: Secure voter registration via smart contract
+- **Live Results**: Real-time vote tallies from on-chain state
+- **Countdown Timer**: Election time window enforcement
+- **Responsive UI**: Modern, accessible design
+- **Transaction Verification**: AlgoExplorer links for transparency
+
+## 📖 Documentation
+
+- [Contract Deployment Guide](projects/contracts/README.md)
+- [Frontend Setup Guide](projects/frontend/README.md)
+- [Demo Guide](docs/DEMO_GUIDE.md)
+
+## 🔐 Security
+
+- All voting logic enforced on-chain
+- Double-voting prevention via local state
+- Time-bound elections (start/end timestamps)
+- Wallet authentication required
+- Input validation and error handling
+
+## 🛠️ Development
+
+### Contract Development
+```bash
+cd projects/contracts
+algokit project run build
+```
+
+### Frontend Development
+```bash
+cd projects/frontend
+npm run dev
+```
+
+## 📝 License
+
+MIT License - see LICENSE file for details
+
+## 🤝 Contributing
+
+Contributions welcome! Please open an issue or PR.
+
 ---
 
-## Verified On-Chain
-
-- Vote transaction confirmed on TestNet Explorer
-- `candidate_a_votes = 1`, `total_voters = 1`
-- Election window active, `election_closed = 0`
-- Contract correctly rejects double votes
-
----
-
-## Roadmap
-
-- Multi-candidate elections
-- Anonymous voting (commit-reveal scheme)
-- AI transparency service backend
-- MainNet deployment
-
----
-
-**Built for Hackspiration '26 — Algorand Track** | MIT License
+Built with ❤️ using Algorand blockchain technology

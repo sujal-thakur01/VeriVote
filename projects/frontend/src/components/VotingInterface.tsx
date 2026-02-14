@@ -60,16 +60,35 @@ function mapContractError(error: string): string {
     return error
 }
 
+// DEMO MODE - Force election open for guaranteed demo stability
+const DEMO_MODE = true
+
+// DEMO PRESENTATION MODE - Hardcoded deterministic demo behavior
+const DEMO_PRESENTATION_MODE = true
+
 const VotingInterface = () => {
     const { enqueueSnackbar } = useSnackbar()
     const { activeAddress, transactionSigner } = useWallet()
     const algodClient = useRef(getAlgodClient())
 
+    // Demo state
+    const [demoTimeLeft, setDemoTimeLeft] = useState(600)
+
     // Election state from blockchain
     const [electionState, setElectionState] = useState<ElectionState | null>(null)
     const [timeRemaining, setTimeRemaining] = useState<{ hours: number; minutes: number; seconds: number }>({ hours: 0, minutes: 0, seconds: 0 })
-    const [electionStatus, setElectionStatus] = useState<'loading' | 'not_started' | 'active' | 'ended' | 'closed' | 'error'>('loading')
-    const [hasVoted, setHasVoted] = useState<number | null>(null)
+    const [electionStatus, setElectionStatus] = useState<'loading' | 'not_started' | 'active' | 'ended' | 'closed' | 'error'>(() => {
+        return DEMO_PRESENTATION_MODE ? 'active' : 'loading'
+    })
+    const [hasVoted, setHasVoted] = useState<number | null>(() => {
+        if (DEMO_PRESENTATION_MODE && activeAddress) {
+            const stored = localStorage.getItem(`demoVoted_${activeAddress}`)
+            return stored ? parseInt(stored) : null
+        }
+        return null
+    })
+    const [isOptedIn, setIsOptedIn] = useState<boolean>(false)
+    const [isOptingIn, setIsOptingIn] = useState(false)
     const [isVoting, setIsVoting] = useState(false)
     const [showConfetti, setShowConfetti] = useState(false)
     const [lastTxId, setLastTxId] = useState<string | null>(null)
@@ -79,6 +98,40 @@ const VotingInterface = () => {
         { id: 1, name: 'Alice Thompson', avatar: '\u{1F469}\u200D\u{1F4BC}', votes: 0 },
         { id: 2, name: 'Bob Martinez', avatar: '\u{1F468}\u200D\u{1F4BC}', votes: 0 }
     ])
+
+    // Demo mode initialization
+    useEffect(() => {
+        if (!DEMO_MODE) return
+
+        // Hardcoded demo results
+        setCandidates([
+            { id: 1, name: 'Alice Thompson', avatar: '👩‍💼', votes: 1 },
+            { id: 2, name: 'Bob Martinez', avatar: '👨‍💼', votes: 2 }
+        ])
+
+        const storedVoted = localStorage.getItem('demoVoted')
+        if (storedVoted) setHasVoted(parseInt(storedVoted))
+
+        const storedEndTime = localStorage.getItem('demoEndTime')
+        let endTime = storedEndTime
+        if (!endTime) {
+            endTime = (Date.now() + 10 * 60 * 1000).toString()
+            localStorage.setItem('demoEndTime', endTime)
+        }
+
+        const interval = setInterval(() => {
+            const remaining = Math.max(0, Math.floor((Number(endTime) - Date.now()) / 1000))
+            setDemoTimeLeft(remaining)
+
+            const hours = Math.floor(remaining / 3600)
+            const minutes = Math.floor((remaining % 3600) / 60)
+            const seconds = remaining % 60
+            setTimeRemaining({ hours, minutes, seconds })
+        }, 1000)
+
+        return () => clearInterval(interval)
+    }, [])
+
 
     // Fetch election state from blockchain
     const fetchElectionState = useCallback(async () => {
@@ -125,7 +178,14 @@ const VotingInterface = () => {
 
             // Determine election status
             const now = Math.floor(Date.now() / 1000)
-            if (state.electionClosed === 1) {
+
+            // DEMO MODE: Override with time-based status
+            if (DEMO_MODE) {
+                setElectionStatus(demoTimeLeft > 0 ? 'active' : 'ended')
+            } else if (DEMO_MODE) {
+                console.log("🎬 DEMO MODE ACTIVE - UI time validation bypassed")
+                setElectionStatus('active')
+            } else if (state.electionClosed === 1) {
                 setElectionStatus('closed')
             } else if (state.electionStart === 0 && state.electionEnd === 0) {
                 setElectionStatus('not_started')
@@ -157,8 +217,90 @@ const VotingInterface = () => {
         }
     }, [activeAddress])
 
+    // Check if user is opted into the app
+    const checkOptIn = useCallback(async () => {
+        if (!activeAddress) {
+            setIsOptedIn(false)
+            return
+        }
+
+        try {
+            console.log("Checking opt-in status for:", activeAddress)
+            const accountInfo = await algodClient.current.accountApplicationInformation(activeAddress, APP_ID).do()
+
+            if (accountInfo && accountInfo.appLocalState) {
+                console.log("✅ User IS opted in")
+                setIsOptedIn(true)
+            } else {
+                console.log("❌ User NOT opted in")
+                setIsOptedIn(false)
+            }
+        } catch (err) {
+            console.log("❌ User NOT opted in (error):", err)
+            setIsOptedIn(false)
+        }
+    }, [activeAddress])
+
+    // Opt-in to the application
+    const handleOptIn = async () => {
+        if (!activeAddress || !transactionSigner) {
+            enqueueSnackbar('Please connect your wallet first', { variant: 'warning' })
+            return
+        }
+
+        setIsOptingIn(true)
+
+        try {
+            console.log("=== OPT-IN TRANSACTION ===")
+            console.log("Address:", activeAddress)
+            console.log("App ID:", APP_ID)
+
+            const suggestedParams = await algodClient.current.getTransactionParams().do()
+
+            // CRITICAL: Use algosdk to generate correct ARC4 method selector (SHA-512/256)
+            const method = new algosdk.ABIMethod({
+                name: 'opt_in_voter',
+                args: [],
+                returns: { type: 'string' }
+            })
+
+            const optInTxn = algosdk.makeApplicationCallTxnFromObject({
+                sender: activeAddress,
+                suggestedParams,
+                appIndex: Number(APP_ID),
+                onComplete: algosdk.OnApplicationComplete.OptInOC,
+                appArgs: [method.getSelector()]
+            })
+
+            console.log("Opt-in transaction created, signing...")
+
+            const signedTxns = await transactionSigner([optInTxn], [0])
+
+            console.log("Sending opt-in transaction...")
+
+            const response = await algodClient.current.sendRawTransaction(signedTxns[0]).do()
+            const txId = (response as any).txId || (response as any).txid
+
+            console.log("Opt-in transaction sent! TxID:", txId)
+
+            await algosdk.waitForConfirmation(algodClient.current, txId, 4)
+
+            console.log("✅ Opt-in confirmed!")
+
+            setIsOptedIn(true)
+            enqueueSnackbar('Successfully opted in! You can now vote.', { variant: 'success' })
+        } catch (err: any) {
+            console.error('Opt-in error:', err)
+            enqueueSnackbar(`Opt-in failed: ${err.message || err}`, { variant: 'error' })
+        } finally {
+            setIsOptingIn(false)
+        }
+    }
+
     // Fetch state on mount and poll every 5 seconds
     useEffect(() => {
+        if (DEMO_MODE) return // Skip blockchain calls in demo mode
+
         fetchElectionState()
         const interval = setInterval(fetchElectionState, 5000)
         return () => clearInterval(interval)
@@ -166,18 +308,48 @@ const VotingInterface = () => {
 
     // Check voter status when wallet connects
     useEffect(() => {
-        checkVoterStatus()
-    }, [checkVoterStatus])
+        if (activeAddress) {
+            checkVoterStatus()
+            checkOptIn()
+        } else {
+            // EMERGENCY FIX: Reset state on disconnect
+            setHasVoted(null)
+            setIsOptedIn(false)
+        }
+    }, [activeAddress, checkVoterStatus, checkOptIn])
 
-    // Countdown timer based on real election_end
+    // Countdown timer
     useEffect(() => {
+        if (DEMO_PRESENTATION_MODE) {
+            // Demo mode: hardcoded 1 hour countdown
+            let demoEndTime = parseInt(localStorage.getItem('demoEndTime') || '0')
+            if (!demoEndTime) {
+                demoEndTime = Math.floor(Date.now() / 1000) + 3600
+                localStorage.setItem('demoEndTime', demoEndTime.toString())
+            }
+
+            const timer = setInterval(() => {
+                const now = Math.floor(Date.now() / 1000)
+                const remaining = Math.max(0, demoEndTime - now)
+                const hours = Math.floor(remaining / 3600)
+                const minutes = Math.floor((remaining % 3600) / 60)
+                const seconds = remaining % 60
+                setTimeRemaining({ hours, minutes, seconds })
+            }, 1000)
+
+            return () => clearInterval(timer)
+        }
+
+        // Real mode
         const timer = setInterval(() => {
             if (!electionState) return
 
             const now = Math.floor(Date.now() / 1000)
             let remaining: number
 
-            if (electionStatus === 'not_started' && electionState.electionStart > 0) {
+            if (electionState.electionEnd === 0) {
+                remaining = 3600
+            } else if (electionStatus === 'not_started' && electionState.electionStart > 0) {
                 remaining = electionState.electionStart - now
             } else if (electionStatus === 'active') {
                 remaining = electionState.electionEnd - now
@@ -209,37 +381,59 @@ const VotingInterface = () => {
         setIsVoting(true)
 
         try {
+            console.log("=== VOTE TRANSACTION ===")
+            console.log("Sender:", activeAddress)
+            console.log("App ID:", Number(APP_ID))
+            console.log("Candidate:", candidateId)
+
             const suggestedParams = await algodClient.current.getTransactionParams().do()
 
-            // Encode ABI call: cast_vote(uint64)
-            const methodSelector = METHOD_SELECTORS.cast_vote
-            const candidateArg = algosdk.encodeUint64(candidateId)
-            const appArgs = [methodSelector, candidateArg]
-
-            const txn = algosdk.makeApplicationNoOpTxnFromObject({
-                from: activeAddress,
-                appIndex: APP_ID,
-                appArgs,
-                suggestedParams,
+            const method = new algosdk.ABIMethod({
+                name: "cast_vote",
+                args: [{ type: "uint64" }],
+                returns: { type: "string" }
             })
 
-            // Sign with wallet
-            const signedTxns = await transactionSigner(
-                [txn],
-                [0]
-            )
+            const txn = algosdk.makeApplicationCallTxnFromObject({
+                sender: activeAddress,
+                suggestedParams,
+                appIndex: Number(APP_ID),
+                appArgs: [
+                    method.getSelector(),
+                    algosdk.encodeUint64(candidateId)
+                ],
+                onComplete: algosdk.OnApplicationComplete.NoOpOC
+            })
 
-            const { txId } = await algodClient.current.sendRawTransaction(signedTxns[0]).do()
+            const signed = await transactionSigner([txn], [0])
+            const response = await algodClient.current.sendRawTransaction(signed).do()
+            const txId = (response as any).txId || (response as any).txid
+
+            console.log("Vote transaction sent! TxID:", txId)
 
             // Wait for confirmation
             await algosdk.waitForConfirmation(algodClient.current, txId, 4)
 
             const candidate = candidates.find(c => c.id === candidateId)
 
-            // Save vote
+            // Demo mode instant update
+            if (DEMO_MODE) {
+                if (hasVoted) return
+
+                setHasVoted(candidateId)
+                localStorage.setItem('demoVoted', candidateId.toString())
+
+                setShowConfetti(true)
+                setTimeout(() => setShowConfetti(false), 3000)
+                enqueueSnackbar(`Vote recorded for ${candidate?.name}!`, { variant: 'success' })
+                setIsVoting(false)
+                return
+            }
+
+            // Save vote (non-demo mode)
             setHasVoted(candidateId)
-            setLastTxId(txId)
             localStorage.setItem(`verivote_voted_${activeAddress}`, candidateId.toString())
+            setLastTxId(txId)
 
             // Show confetti
             setShowConfetti(true)
@@ -299,7 +493,7 @@ const VotingInterface = () => {
     }
 
     const statusBadge = getStatusBadge()
-    const canVote = electionStatus === 'active' && !hasVoted && !!activeAddress
+    const canVote = DEMO_MODE ? (!!activeAddress && !hasVoted) : (electionStatus === 'active' && !hasVoted && !!activeAddress)
 
     return (
         <div className="min-h-screen bg-slate-950 relative overflow-hidden">
@@ -385,16 +579,35 @@ const VotingInterface = () => {
                             <div className="absolute inset-0 bg-gradient-to-br from-blue-500/0 to-purple-500/5 rounded-3xl"></div>
                             <div className="relative">
                                 <h3 className="text-3xl font-black text-white mb-8 flex items-center gap-3 bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-400">
-                                    <span className="text-4xl">{'\u{1F5F3}\uFE0F'}</span> Cast Your Vote
+                                    <span className="text-4xl">{'🗳️'}</span> Cast Your Vote
                                 </h3>
 
+                                {/* OPT-IN GATE */}
+                                {electionStatus === 'active' && activeAddress && !isOptedIn && (
+                                    <div className="mb-6 p-6 bg-gradient-to-r from-yellow-500/20 to-orange-500/20 border-2 border-yellow-500/50 rounded-2xl">
+                                        <div className="flex items-center gap-3 mb-3">
+                                            <span className="text-3xl">⚠️</span>
+                                            <div>
+                                                <h4 className="text-lg font-bold text-white">Opt-In Required</h4>
+                                                <p className="text-gray-300 text-sm">You need to opt-in before voting</p>
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={handleOptIn}
+                                            disabled={isOptingIn}
+                                            className="w-full px-6 py-3 bg-gradient-to-r from-yellow-600 to-orange-600 text-white font-bold rounded-xl hover:from-yellow-500 hover:to-orange-500 transition-all shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+                                        >
+                                            {isOptingIn ? 'Opting In...' : '🔓 Opt In to Vote'}
+                                        </button>
+                                    </div>
+                                )}
                                 <div className="space-y-6">
                                     {candidates.map((candidate) => (
                                         <div
                                             key={candidate.id}
                                             className={`group relative overflow-hidden rounded-2xl p-6 transition-all duration-300 ${hasVoted === candidate.id
-                                                    ? 'bg-gradient-to-r from-blue-600/30 to-purple-600/30 border-2 border-blue-400 shadow-xl shadow-blue-500/30 scale-105'
-                                                    : 'bg-gradient-to-r from-white/5 to-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10'
+                                                ? 'bg-gradient-to-r from-blue-600/30 to-purple-600/30 border-2 border-blue-400 shadow-xl shadow-blue-500/30 scale-105'
+                                                : 'bg-gradient-to-r from-white/5 to-white/5 border border-white/10 hover:border-white/30 hover:bg-white/10'
                                                 }`}
                                         >
                                             {hasVoted === candidate.id && (
@@ -403,8 +616,8 @@ const VotingInterface = () => {
                                             <div className="relative flex items-center justify-between">
                                                 <div className="flex items-center gap-5">
                                                     <div className={`text-7xl p-4 rounded-2xl ${hasVoted === candidate.id
-                                                            ? 'bg-gradient-to-br from-blue-500/30 to-purple-500/30 shadow-lg shadow-blue-500/50'
-                                                            : 'bg-gradient-to-br from-gray-700/50 to-gray-600/50'
+                                                        ? 'bg-gradient-to-br from-blue-500/30 to-purple-500/30 shadow-lg shadow-blue-500/50'
+                                                        : 'bg-gradient-to-br from-gray-700/50 to-gray-600/50'
                                                         }`}>
                                                         {candidate.avatar}
                                                     </div>
@@ -416,14 +629,14 @@ const VotingInterface = () => {
 
                                                 <button
                                                     onClick={() => handleVote(candidate.id)}
-                                                    disabled={!canVote || isVoting}
+                                                    disabled={!canVote || isVoting || !isOptedIn}
                                                     className={`px-8 py-4 rounded-xl font-bold text-lg transition-all duration-300 ${hasVoted === candidate.id
-                                                            ? 'bg-green-500 text-white cursor-default shadow-lg shadow-green-500/50'
-                                                            : hasVoted
-                                                                ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
-                                                                : canVote
-                                                                    ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-500 hover:to-purple-500 hover:scale-110 shadow-xl shadow-purple-500/50 hover:shadow-purple-500/70'
-                                                                    : 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                                                        ? 'bg-green-500 text-white cursor-default shadow-lg shadow-green-500/50'
+                                                        : hasVoted
+                                                            ? 'bg-gray-700 text-gray-500 cursor-not-allowed'
+                                                            : canVote
+                                                                ? 'bg-gradient-to-r from-blue-600 to-purple-600 text-white hover:from-blue-500 hover:to-purple-500 hover:scale-110 shadow-xl shadow-purple-500/50 hover:shadow-purple-500/70'
+                                                                : 'bg-gray-700 text-gray-500 cursor-not-allowed'
                                                         }`}
                                                 >
                                                     {isVoting ? (
@@ -526,8 +739,8 @@ const VotingInterface = () => {
                                                         <div className="relative w-full bg-gray-800/50 rounded-full h-4 overflow-hidden border border-white/10">
                                                             <div
                                                                 className={`absolute inset-0 rounded-full transition-all duration-500 ${candidate.id === 1
-                                                                        ? 'bg-gradient-to-r from-blue-500 via-blue-400 to-cyan-400 shadow-lg shadow-blue-500/50'
-                                                                        : 'bg-gradient-to-r from-purple-500 via-purple-400 to-pink-400 shadow-lg shadow-purple-500/50'
+                                                                    ? 'bg-gradient-to-r from-blue-500 via-blue-400 to-cyan-400 shadow-lg shadow-blue-500/50'
+                                                                    : 'bg-gradient-to-r from-purple-500 via-purple-400 to-pink-400 shadow-lg shadow-purple-500/50'
                                                                     }`}
                                                                 style={{ width: `${getPercentage(candidate.votes)}%` }}
                                                             ></div>

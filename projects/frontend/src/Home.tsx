@@ -181,7 +181,7 @@ const Home: React.FC<HomeProps> = () => {
               <div className="text-gray-400 text-sm uppercase tracking-wider">Blockchain Secured</div>
             </div>
             <div className="text-center group">
-              <div className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400 mb-2 group-hover:scale-110 transition-transform">755499428</div>
+              <div className="text-4xl font-black text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-400 mb-2 group-hover:scale-110 transition-transform">755502869</div>
               <div className="text-gray-400 text-sm uppercase tracking-wider">App ID</div>
             </div>
           </div>

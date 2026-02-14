@@ -1,5 +1,4 @@
 import { useWallet, Wallet, WalletId } from '@txnlab/use-wallet-react'
-import Account from './Account'
 
 interface ConnectWalletInterface {
   openModal: boolean
@@ -17,13 +16,6 @@ const ConnectWallet = ({ openModal, closeModal }: ConnectWalletInterface) => {
         <h3 className="font-bold text-2xl">Select wallet provider</h3>
 
         <div className="grid m-2 pt-5">
-          {activeAddress && (
-            <>
-              <Account />
-              <div className="divider" />
-            </>
-          )}
-
           {!activeAddress &&
             wallets?.map((wallet) => (
               <button

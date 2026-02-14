@@ -114,7 +114,7 @@ def fund_contract(algod_client, creator_account, app_address):
 
 
 # ============================================================
-# INITIALIZE ELECTION (FIXED ABI CALL)
+# INITIALIZE ELECTION (6-HOUR WINDOW FOR DEMO)
 # ============================================================
 
 def initialize_election(algod_client, creator_account, app_spec, app_id):
@@ -126,11 +126,12 @@ def initialize_election(algod_client, creator_account, app_spec, app_id):
     from algosdk.transaction import OnComplete
 
     current_time = int(time.time())
-    start_time = current_time - 60
-    end_time = current_time + 3600
+    start_time = current_time - 60  # Started 60 seconds ago
+    end_time = current_time + (6 * 3600)  # 6 hours from now
 
     print(f"   Start time: {start_time}")
     print(f"   End time: {end_time}")
+    print(f"   Duration: 6 hours ({6 * 3600} seconds)")
 
     signer = AccountTransactionSigner(creator_account.private_key)
 
@@ -197,6 +198,8 @@ def main():
     print(f"VITE_VOTING_APP_ID={app_id}")
 
     print("\n🎉 Deployment Complete!")
+    print("   Election is LIVE and runs for 6 hours.")
+    print("   No time window issues during demo!")
 
 
 if __name__ == "__main__":

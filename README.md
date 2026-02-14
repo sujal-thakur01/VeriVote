@@ -1,78 +1,69 @@
 # VeriVote
 
-**Verifiable campus voting on Algorand blockchain**
+**Blockchain-verified campus voting on Algorand — one wallet, one vote, full transparency.**
+
+> Built for **Hackspiration '26** | Track 2: AI & Automation in Blockchain
 
 ---
 
 ## Demo
 
-![Landing Page](./docs/screenshots/landing.png)
+| Landing Page | Voting Interface | Live Results |
+|:---:|:---:|:---:|
+| ![Landing](./docs/screenshots/landing.png) | ![Voting](./docs/screenshots/voting.png) | ![Results](./docs/screenshots/results.png) |
 
-![Voting Interface](./docs/screenshots/voting.png)
+https://github.com/user-attachments/assets/demo.mp4
 
-![Live Results](./docs/screenshots/results.png)
-
-
-
-## 🎥 Demo Video
-
-[![Watch Demo](./docs/screenshots/landing.png)](./docs/videos/demo.mp4)
-
-Click the image above to watch the demo.
-
-
+[Download Demo Video](./docs/videos/demo.mp4)
 
 ---
 
 ## Problem
 
-- Campus elections lack transparency and verifiable audit trails
-- Manual/centralized systems are vulnerable to tampering
-- Students don't trust election results
-
----
+- Campus elections rely on centralized systems vulnerable to tampering
+- No verifiable audit trail — students can't trust results
+- No enforcement against double voting or vote manipulation
 
 ## Solution
 
-
-- **Blockchain-verified voting** — Every vote immutably recorded on Algorand
-- **Double-vote prevention** — Smart contract enforces one vote per wallet using local state
-- **Time-lock enforcement** — Voting only allowed during election window
-- **On-Chain Verification Panel** — Displays App ID and network for transparency
-- **Real-time results** — Live vote tallying with on-chain verification
+- **On-chain voting** — Every vote immutably recorded on Algorand TestNet
+- **Double-vote prevention** — Smart contract enforces 1 wallet = 1 vote via local state
+- **Time-lock enforcement** — Voting window cryptographically enforced on-chain
+- **AI audit hash** — SHA256 report hash stored on-chain for verifiable transparency
 
 ---
 
 ## Architecture
 
-![Blockchain Flow](./docs/screenshots/blockchain.png)
-
-![Application Flow](./docs/screenshots/flow.png)
-
-
 ```
-Student → React/Wallet → Algorand Smart Contract → On-Chain State
-                                ↓
-                         AI Summary (hash stored)
+Student → Pera Wallet → React Frontend → Algorand Smart Contract → On-Chain State
+                                                  ↓
+                                         AI Report Hash (SHA256)
 ```
 
-![Architecture Diagram](./docs/screenshots/architecture.png)
+![Architecture](./docs/screenshots/architecture.png)
 
 ---
 
 ## Smart Contract
 
-**App ID:** `1004` (Algorand LocalNet)
+| | |
+|---|---|
+| **Standard** | ARC4 (Algopy → TEAL via Puyapy) |
+| **Network** | Algorand TestNet |
+| **App ID** | `755499428` |
 
 **Global State:** `candidate_a_votes`, `candidate_b_votes`, `election_start`, `election_end`, `total_voters`, `ai_report_hash`, `election_closed`
 
 **Local State:** `has_voted`, `vote_timestamp`
 
-**Security:**
-- Time-window validation (no voting outside election period)
+**Methods:** `create_election` · `cast_vote` · `close_election` · `get_results` · `get_voter_status` · `opt_in_voter`
+
+**On-chain security:**
+- Time-window validation — no voting outside election period
 - Double-vote check via local state flag
-- Creator-only election management
-- Immutable vote records
+- Creator-only election lifecycle control
+- Immutable, auditable vote records
 
 ---
 
@@ -80,57 +71,48 @@ Student → React/Wallet → Algorand Smart Contract → On-Chain State
 
 | Layer | Technology |
 |-------|------------|
-| Smart Contract | AlgoPy (TEAL) |
-| Blockchain | Algorand LocalNet |
+| Smart Contract | Python (Algopy) → TEAL |
+| Blockchain | Algorand TestNet |
 | Frontend | React + TypeScript + Vite |
-| Styling | TailwindCSS |
-| Wallet | Pera Wallet |
+| Styling | TailwindCSS (Glassmorphism) |
+| Wallet | Pera Wallet (via use-wallet) |
+| Deployment | AlgoKit + Poetry |
 
 ---
 
 ## How to Run
 
 ```bash
-# Start LocalNet
-algokit localnet start
-
-# Deploy Contract
+# Deploy contract to TestNet
 cd projects/contracts
 poetry install
-poetry run python scripts/deploy_voting.py --demo
+poetry run python scripts/deploy_voting.py --network testnet
 
-# Run Frontend
+# Run frontend
 cd projects/frontend
 npm install
 npm run dev
+# → http://localhost:5173
 ```
-
-Open `http://localhost:5173`
 
 ---
 
-## Status
+## Verified On-Chain
 
-**Live:**
-- ✅ Smart contract deployed (App ID: 1004)
-- ✅ Full test suite passing
-- ✅ Glassmorphism UI with wallet integration
-
-**Demo Mode:**
-- Frontend uses mock data + localStorage
-- Real blockchain integration planned for TestNet
+- Vote transaction confirmed on TestNet Explorer
+- `candidate_a_votes = 1`, `total_voters = 1`
+- Election window active, `election_closed = 0`
+- Contract correctly rejects double votes
 
 ---
 
 ## Roadmap
 
-- Deploy to Algorand TestNet/MainNet
-- Full ABI integration (replace mock calls)
-- AI transparency service backend
 - Multi-candidate elections
-- Anonymous voting (commit-reveal)
-- Mobile app
+- Anonymous voting (commit-reveal scheme)
+- AI transparency service backend
+- MainNet deployment
 
 ---
 
-**MIT License • Built for Algorand Hackathon 2026**
+**Built for Hackspiration '26 — Algorand Track** | MIT License
